@@ -72,7 +72,7 @@ class CanCommand(Enum):
 _DEBUG_FRAME = False
 
 
-class CanVesc(Motor):
+class CanVesc():
 
     def __init__(self, interface):
         self.sock = socket.socket(socket.AF_CAN, socket.SOCK_RAW, socket.CAN_RAW)
@@ -81,7 +81,8 @@ class CanVesc(Motor):
         except OSError as err:
                 print("OS error: {0}: %r".format(err) % interface)
         self.data_buffer = []
-        super(Motor, self).__init__()
+        self.rpm = 0
+        self.position = 0
 
     def build_can_frame(self, command, device_id, data):
         # VESC commands are 0-9
