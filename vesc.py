@@ -81,8 +81,6 @@ class CanVesc():
         except OSError as err:
                 print("OS error: {0}: %r".format(err) % interface)
         self.data_buffer = []
-        self.rpm = 0
-        self.position = 0
 
     def build_can_frame(self, command, device_id, data):
         # VESC commands are 0-9
@@ -99,7 +97,6 @@ class CanVesc():
 
     def set_motor_rpm(self, erpm, device_id):
         try:
-            # send erpm command
             data = bytearray(erpm.to_bytes(7, byteorder='big'))
             data[0] = 0x01  # "rx_buffer_last_id" in VESC firmware
             data[1] = 0x00  # "commands_send" in VESC firmware
@@ -110,25 +107,35 @@ class CanVesc():
         except socket.error:
             print('Error sending CAN frame')
 
-    def set_motor_current(self, current_amps, device_id):
+    def set_motor_current(self, current_amps, device_id, brake=True):
         try:
-            # send erpm command
-            if current_amps < 0:
-                current_amps *= -1
+            if brake:
                 command = CanCommand.SET_CURRENT_BRAKE
             else:
                 command = CanCommand.SET_CURRENT
-            data = bytearray((int(current_amps*1000)).to_bytes(4, byteorder='big'))
+            #data = bytearray((int(current_amps*1000)).to_bytes(4, byteorder='big'))
+            data = bytearray(struct.pack('>i', int(current_amps*1000)))
+            #print(brake)
+            #print(struct.pack('i', current_amps))
+            #print data
             frame = self.build_can_frame(command, device_id, data)
             print(frame) if _DEBUG_FRAME else None
             self.sock.send(frame)
         except socket.error:
             print('Error sending CAN frame')
 
-    def process_packet(self, packet):
+    def process_packet(self, motors):
+        packet, addr = self.sock.recvfrom(16)
         #print(packet)
         canid, dlc, data = self.dissect_can_frame(packet)
         can_command = canid>>8 & 0xFF
+        sender_id = canid & 0xFF
+        for m in motors:
+          if m.canId == sender_id:
+            motor = m
+        if not motor:
+            return
+        #print(sender_id)
         msg1 = 'Received: can_id=%x, can_dlc=%x, data=%s' % (canid, dlc, data)
         msg2 = "%r" % packet
     #
@@ -141,8 +148,8 @@ class CanVesc():
         #print(canid)
         if can_command == CanCommand.SEND_ROVER_DETAILS.value:
             #print('Recieved Rover Packet: %r' % data)
-            self.position = struct.unpack('>i', data[0:4])[0]
-            self.rpm = struct.unpack('>f', data[4:])[0]
+            motor.position = struct.unpack('>i', data[0:4])[0]
+            motor.velocity_feedback = struct.unpack('>f', data[4:])[0]
         if can_command == CanCommand.FILL_RX_BUFFER.value:
             for b in data[1:dlc-2]:
                 self.data_buffer.append(b)

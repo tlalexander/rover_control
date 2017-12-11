@@ -14,8 +14,10 @@ display_rows, display_columns = os.popen('stty size', 'r').read().split()
 MAX_CURRENT = 35
 MAX_BRAKE_CURRENT = 5
 
-P_SCALAR = 1/25.0
+P_SCALAR = 1/15.0
 D_SCALAR = 1/3.0
+
+_NUM_ERRORS_TO_AVERAGE = 3
 
 # Don't forget to set up CAN with:
 # ip link set can0 up type can bitrate 1000000
@@ -36,28 +38,35 @@ def main(e):
     control_thread.start()
     sleep(0.5)
 
+    SPEED = 500
     while True:
         with lock:
-            control_thread.motor.acceleration = 60000
-            control_thread.motor.velocity_setpoint = 10000
-        sleep(1)
+            control_thread.motor1.acceleration = 1500
+            control_thread.motor0.acceleration = 1500
+            control_thread.motor1.velocity_goal = -SPEED
+            control_thread.motor0.velocity_goal = SPEED
+        sleep(2)
         with lock:
-            control_thread.motor.acceleration = 10000
-            control_thread.motor.velocity_setpoint = 20000
-        sleep(3)
-        with lock:
-            control_thread.motor.acceleration = 40000
-            control_thread.motor.velocity_setpoint = 30000
-        sleep(1)
-        with lock:
-            control_thread.motor.acceleration = 40000
-            control_thread.motor.velocity_setpoint = 500
-        sleep(1)
+            control_thread.motor1.velocity_goal = SPEED
+            control_thread.motor0.velocity_goal = -SPEED
+        sleep(2)
+        # with lock:
+        #     control_thread.motor1.velocity_goal = -1000
+        #     control_thread.motor0.velocity_goal = 500
+        # sleep(0.5)
+        # with lock:
+        #     control_thread.motor.acceleration = 40000
+        #     control_thread.motor.velocity_setpoint = 30000
+        # sleep(1)
+        # with lock:
+        #     control_thread.motor.acceleration = 40000
+        #     control_thread.motor.velocity_setpoint = 500
+        # sleep(1)
     with lock:
-        control_thread.motor.velocity_setpoint = 0
+        control_thread.motor0.velocity_goal = 0
     sleep(4)
     with lock:
-        control_thread.motor.disable()
+        control_thread.motor0.disable()
     e.set()
 
 
@@ -68,100 +77,121 @@ class ControlThread(threading.Thread):
         self.name = name
         self.lock = lock
         self.event = event
-        self.motor = Motor(vesc, 0)
+        self.vesc = vesc
+        self.motor0 = Motor(vesc, 0)
+        self.motor1 = Motor(vesc, 1)
 
     def run(self):
-        print("{} started!".format(self.getName()))              # "Thread-x started!"
-        #sleep(1)                                      # Pretend to work for a second
-        #print("{} finished!".format(self.getName()))             # "Thread-x finished!"
+        print("{} started!".format(self.getName()))
 
         cols = int(display_columns)
 
         start_time = time()
 
         _TIMESTEP = 0.001
-        _RENDERESTEP = .005
+        _RENDERESTEP = .05
 
-        tick1 = time()
-        tick2 = tick1
+        tick = time()
+        rendertick = tick
         #s = 0
 
-        self.motor.set_current(0)
-
-        errors = [0]*3
+        self.motor0.set_current(0)
+        self.motor1.set_current(0)
 
         while not self.event.isSet():
             self.lock.acquire()
             clock = time()
-            if clock > tick1:
-                tick1 += _RENDERESTEP
-                #self.motor.set_speed()
-                #self.motor.plot_position(cols, 30.0)
-            if clock > tick2:
-                tick2 += _TIMESTEP
-                self.motor.tick_velocity(_TIMESTEP)
-                cf, addr = self.motor.vesc.sock.recvfrom(16)
-                self.motor.vesc.process_packet(cf)
-                error =  self.motor.velocity - self.motor.vesc.rpm
-
-                errors.insert(0, error)
-                errors.pop()
-
-                error_diffs = [i-j for i, j in zip(errors[:-1], errors[1:])]
-                average_errors = 0
-                for e in error_diffs:
-                    average_errors += e
-                average_errors /= len(error_diffs)
-                # print(error_diffs)
-
-                current_command = error * P_SCALAR + D_SCALAR * average_errors
-                last_error = error
-
-                if current_command > MAX_CURRENT:
-                    current_command = MAX_CURRENT
-                elif current_command < -MAX_BRAKE_CURRENT:
-                    current_command = -MAX_BRAKE_CURRENT
-
-                #print(current_command)
-                self.motor.set_current(current_command)
-
+            if clock > tick:
+                self.vesc.process_packet([self.motor0, self.motor1])
+                self.vesc.process_packet([self.motor0, self.motor1])
+                self.motor0.tick_velocity(_TIMESTEP + clock-tick)
+                self.motor0.update_values(_TIMESTEP, clock-tick)
+                self.motor1.tick_velocity(_TIMESTEP + clock-tick)
+                self.motor1.update_values(_TIMESTEP, clock-tick)
+                tick += _TIMESTEP
+            if clock > rendertick:
+                print("Motor0 Velocity: %r, Motor1 Velocity %r" % (int(self.motor0.velocity_feedback), int(self.motor1.velocity_feedback)))
+                rendertick += _RENDERESTEP
             self.lock.release()
-        motor.disable()
+        self.motor0.disable()
+        self.motor1.disable()
 
 
 class Motor:
     def __init__(self, vesc, canId):
-        self.velocity = 0
+        self.velocity_command = 0
+        self.velocity_feedback = 0
         self.position = 0
         self.acceleration = 0
-        self.velocity_setpoint = 0
+        self.velocity_goal = 0
         self.vesc = vesc
         self.canId = canId
+        self.errors = [0] * _NUM_ERRORS_TO_AVERAGE
+        self.last_error = 0
+
+    def update_values(self, interval, overrun):
+        error =  self.velocity_command - self.velocity_feedback
 
 
-    def set_current(self, current_command):
-        self.vesc.set_motor_current(current_command, self.canId)
+        self.errors.insert(0, error)
+        self.errors.pop()
+
+        error_diffs = [i-j for i, j in zip(self.errors[:-1], self.errors[1:])]
+        average_error_diffs = 0
+        for e in error_diffs:
+            average_error_diffs += e
+        average_error_diffs /= len(error_diffs)
+
+        #print("Velocity Command %r, velocity_feedback %r, error %r" % (self.velocity_command, self.velocity_feedback, average_error_diffs))
+        #print(self.errors)
+
+
+        d_comp = interval/(interval+overrun)
+
+        current_command = error * P_SCALAR + D_SCALAR * average_error_diffs * d_comp
+
+        self.last_error = error
+
+        if (current_command * np.sign(self.velocity_command)) > 0:
+            brake = False
+            if current_command > MAX_CURRENT:
+                current_command = MAX_CURRENT
+            elif current_command < -MAX_CURRENT:
+                current_command = -MAX_CURRENT
+        else:
+            brake = True
+            if current_command > MAX_BRAKE_CURRENT:
+                current_command = MAX_BRAKE_CURRENT
+            elif current_command < -MAX_BRAKE_CURRENT:
+                current_command = -MAX_BRAKE_CURRENT
+
+        self.set_current(current_command, brake)
+
+    def set_current(self, current_command, brake=True):
+        self.vesc.set_motor_current(current_command, self.canId, brake)
 
     def plot_position(self, cols, scale_factor):
-        s = cols/2  +  ((cols/2) * (self.velocity / scale_factor))
+        s = cols/2  +  ((cols/2) * (self.velocity_command / scale_factor))
         print_spaces(int(s))
 
     def tick_velocity(self, tick_length):
-        if self.velocity != self.velocity_setpoint:
-            increment = self.acceleration * tick_length * np.sign(self.velocity_setpoint-self.velocity)
+        if self.velocity_command != self.velocity_goal:
+            # Increment by acceleration * tick_length with the appropriate sign
+            increment = self.acceleration * tick_length * np.sign(self.velocity_goal-self.velocity_command) # * np.sign(self.velocity_goal)
             #print("velocity %d, velocity setpoint %f, increment %f, position %g" % (int(self.velocity*1000), self.velocity_setpoint, increment, self.position))
-            self.velocity += increment
+            self.velocity_command += increment
         self.tick_position(tick_length)
 
     def tick_position(self, tick_length):
-        self.position += self.velocity * tick_length
+        self.position += self.velocity_command * tick_length
 
     def disable(self):
-        self.velocity = 0
+        self.velocity_command = 0
         self.position = 0
         self.acceleration = 0
-        self.velocity_setpoint = 0
-        self.set_current(0)
+        self.velocity_goal = 0
+        self.set_current(-0.001, brake=True)
+        print('DISABLE')
 
 
 
@@ -175,3 +205,5 @@ if __name__ == "__main__":
         main(e)
     except KeyboardInterrupt:
         e.set()
+        print('EXIT')
+        sleep(0.1)
