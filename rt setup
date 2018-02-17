@@ -1,0 +1,109 @@
+sudo apt-get install libncurses5-dev bc
+
+git clone -b 'rpi-4.9.y' --depth 1 https://github.com/raspberrypi/linux.git
+
+wget https://www.kernel.org/pub/linux/kernel/projects/rt/4.9/patch-4.9.47-rt37.patch.xz
+# Older patches are in https://www.kernel.org/pub/linux/kernel/projects/rt/4.9/older/
+wget https://raw.githubusercontent.com/fedberry/kernel/master/usb-dwc_otg-fix-system-lockup-when-interrupts-are-threaded.patch
+
+export KERNEL=kernel7
+export ARCH=arm
+export CROSS_COMPILE=
+export CONCURRENCY_LEVEL=$(nproc)
+
+
+export CROSS_COMPILE=tools/arm-bcm2708/gcc-linaro-arm-linux-gnueabihf-raspbian/bin/arm-linux-gnueabihf-
+
+
+cd linux
+
+make bcm2709_defconfig
+
+make bcm2835_defconfig
+
+xzcat ../patch-4.9.33-rt23.patch.xz | patch -p1
+
+patch -i ../usb-dwc_otg-fix-system-lockup-when-interrupts-are-threaded.patch -p1 --dry-run
+# continue when all hunks are there...
+patch -i ../usb-dwc_otg-fix-system-lockup-when-interrupts-are-threaded.patch -p1
+
+make menuconfig
+# set Kernel Features -> Preemption Model = Fully Preemptible Kernel (RT)
+# set Kernel Features -> Timer frequency = 1000 Hz
+
+# Set loadable modules
+
+make clean
+./scripts/config --disable DEBUG_INFO
+make -j$(nproc) deb-pkg
+
+
+kernel=
+vmlinuz-4.9.65-rt56-v7+.
+vmlinuz-4.9.65-rt56+
+4.9.65-rt56+.
+
+
+
+
+sudo make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- INSTALL_MOD_PATH=/media/taylor/rootfs modules_install
+
+
+
+
+
+umount mnt/fat32
+umount mnt/ext4
+
+---------------------------------------------------------------------------------------------------
+
+PATH=$PATH:../tools/arm-bcm2708/gcc-linaro-arm-linux-gnueabihf-raspbian-x64/bin
+
+KERNEL=kernel7
+
+make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- bcm2709_defconfig OR bcm3508_defoncig
+
+make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- menuconfig
+
+make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- zImage modules dtbs -j 6
+
+
+cp /media/taylor/boot/$KERNEL.img /media/taylor/boot/$KERNEL-backup.img
+cp arch/arm/boot/zImage /media/taylor/boot/$KERNEL.img
+cp arch/arm/boot/dts/*.dtb /media/taylor/boot/
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+.

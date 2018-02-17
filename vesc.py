@@ -6,7 +6,6 @@ import binascii
 from time import sleep
 # CAN frame packing/unpacking (see `struct can_frame` in <linux/can.h>)
 can_frame_fmt = "=IB3x8s"
-from motor import Motor
 
 
 class VescCommand(Enum):
@@ -78,8 +77,10 @@ class CanVesc():
         self.sock = socket.socket(socket.AF_CAN, socket.SOCK_RAW, socket.CAN_RAW)
         try:
             self.sock.bind((interface,))
+            self.open = True
         except OSError as err:
                 print("OS error: {0}: %r".format(err) % interface)
+                self.open = False
         self.data_buffer = []
 
     def build_can_frame(self, command, device_id, data):
@@ -105,7 +106,7 @@ class CanVesc():
             print(frame) if _DEBUG_FRAME else None
             self.sock.send(frame)
         except socket.error:
-            print('Error sending CAN frame')
+            print('Error sending CAN frame') if _DEBUG_FRAME else None
 
     def set_motor_current(self, current_amps, device_id, brake=True):
         try:
@@ -113,18 +114,17 @@ class CanVesc():
                 command = CanCommand.SET_CURRENT_BRAKE
             else:
                 command = CanCommand.SET_CURRENT
-            #data = bytearray((int(current_amps*1000)).to_bytes(4, byteorder='big'))
             data = bytearray(struct.pack('>i', int(current_amps*1000)))
-            #print(brake)
-            #print(struct.pack('i', current_amps))
-            #print data
             frame = self.build_can_frame(command, device_id, data)
             print(frame) if _DEBUG_FRAME else None
             self.sock.send(frame)
         except socket.error:
-            print('Error sending CAN frame')
+            print('Error sending CAN frame') if _DEBUG_FRAME else None
 
     def process_packet(self, motors):
+        if not self.open:
+            #print("VESC NOT OPEN")
+            return
         packet, addr = self.sock.recvfrom(16)
         #print(packet)
         canid, dlc, data = self.dissect_can_frame(packet)

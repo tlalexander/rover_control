@@ -1,0 +1,92 @@
+// Copyright 2015 gRPC authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+
+//python -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. rover.proto
+
+package rover;
+
+// Unary request.
+message Status {
+  RPM rpm = 1;
+  Odometer odo = 2;
+  MotorTemp m_temp = 3;
+  DriverTemp d_temp = 4;
+}
+
+message RPM {
+  int32 fr = 1;
+  int32 fl = 2;
+  int32 br = 3;
+  int32 bl = 4;
+}
+
+message Odometer {
+  int32 fr = 1;
+  int32 fl = 2;
+  int32 br = 3;
+  int32 bl = 4;
+}
+
+message MotorTemp {
+  int32 fr = 1;
+  int32 fl = 2;
+  int32 br = 3;
+  int32 bl = 4;
+}
+message DriverTemp {
+  int32 fr = 1;
+  int32 fl = 2;
+  int32 br = 3;
+  int32 bl = 4;
+}
+
+message BrakeMilliAmps {
+  int32 fr = 1;
+  int32 fl = 2;
+  int32 br = 3;
+  int32 bl = 4;
+}
+
+message Acceleration {
+  int32 fr = 1;
+  int32 fl = 2;
+  int32 br = 3;
+  int32 bl = 4;
+}
+
+// Unary response, as configured by the request.
+message Control {
+  // Throttle is in RPM.
+  int32 throttle_rpm = 1;
+
+  // Turn factor is from -100 to 100 where either extreme is rotating in place
+  int32 turn_factor = 2;
+
+  // direct RPM commands can be used instead of throttle and turn factor values.
+  // RPM commands will take prececence if not zero.
+  RPM rpm_command = 3;
+
+  Acceleration acceleration = 4;
+
+  BrakeMilliAmps brake_command = 5;
+
+}
+
+service ControlService {
+  // One request followed by one response.
+  rpc SendControl(Control) returns (Status);
+}
