@@ -6,6 +6,8 @@ import dbus.mainloop.glib
 import dbus.service
 import struct
 
+import time
+
 import grpc
 import rover_pb2_grpc
 import rover_pb2
@@ -18,6 +20,9 @@ except ImportError:
 import sys
 
 from random import randint
+
+
+MAX_VELOCITY = 24000
 
 mainloop = None
 
@@ -340,6 +345,7 @@ class RobotCommandChrc(Characteristic):
         #print('ROBOT WRITEVALUE CALLED - GOT VALUE %r' % value)
 
         if len(value) > 2:
+            #print("Got packet of length %d: %r" % (len(value), bytes(value)))
             try:
                 rpm = struct.unpack('<i', bytes(value[:4]))[0]
                 steer = struct.unpack('<i', bytes(value[4:]))[0]
@@ -352,6 +358,11 @@ class RobotCommandChrc(Characteristic):
                 br_rpm *= -1
                 #print("FR: %r, FL %r" % (fr_rpm, fl_rpm))
 
+                fr_rpm = min(MAX_VELOCITY, fr_rpm)
+                fl_rpm = min(MAX_VELOCITY, fl_rpm)
+                br_rpm = min(MAX_VELOCITY, br_rpm)
+                bl_rpm = min(MAX_VELOCITY, bl_rpm)
+
                 rpm = rover_pb2.RPM(
                     fr = int(fr_rpm),
                     fl = int(fl_rpm),
@@ -362,7 +373,7 @@ class RobotCommandChrc(Characteristic):
                 print(status)
 
             except:
-                print("Unexpected error: %r", sys.exc_info())
+                print("Unexpected error with bluetooth control: %r", sys.exc_info())
                 #print("Exception while decoding bytes.")
         else:
             print("Unknown packet of length %d: %r" % (len(value), bytes(value)))
@@ -734,6 +745,9 @@ def find_adapter(bus):
 
 def main():
     global mainloop
+
+    # Make sure the rest of the system is up.
+    time.sleep(2)
 
     dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
 

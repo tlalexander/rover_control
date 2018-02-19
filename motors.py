@@ -19,6 +19,7 @@ end_program = False
 
 MAX_CURRENT = 10
 MAX_BRAKE_CURRENT = 1
+MAX_VELOCITY = 30000
 
 P_SCALAR = 1/250.0
 D_SCALAR = 1/100.0
@@ -44,7 +45,7 @@ def main(e, argv):
     global lock
     lock = threading.Lock()
 
-    print("Blah")
+    print("Start Motors")
 
     # Start Motor Control Thread
     control_thread = ControlThread(name = "MotionControlThread", lock=lock, event=e, vesc=vesc)  # ...Instantiate a thread and pass a unique ID to it
@@ -52,9 +53,9 @@ def main(e, argv):
     control_thread.start()
     sleep(0.5)
 
-    ACCELERATION = 50000
+    ACCELERATION = 25000
 
-    print("Blahblah")
+    #print("Blahblah")
 
     with lock:
              control_thread.motor0.acceleration = ACCELERATION
@@ -71,17 +72,20 @@ def main(e, argv):
         sleep(200)
 
 
-    print("GRPC Server Exception!")
+    print("Starting motors GRPC server...")
 
-    try:
-        server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
-        rover_pb2_grpc.add_ExchangeServicer_to_server(
-        Exchange(), server)
-        server.add_insecure_port('[::]:50051')
-        server.start()
-        print("STARTED GRPC SERVER")
-    except:
-        print("GRPC Server Exception!")
+    while True:
+        try:
+            server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+            rover_pb2_grpc.add_ExchangeServicer_to_server(
+            Exchange(), server)
+            server.add_insecure_port('[::]:50051')
+            server.start()
+            print("STARTED MOTORS GRPC SERVER")
+            break
+        except:
+            print("MOTORS GRPC SERVER EXCEPTION!")
+            time.sleep(1)
 
     global throttle_left
     global throttle_right
@@ -89,6 +93,10 @@ def main(e, argv):
     global throttle_back_right
     while True:
         sleep(.01)
+        vals = [throttle_left, throttle_right, throttle_back_left, throttle_back_right]
+        for idx, val in enumerate(vals):
+            if math.fabs(val) > MAX_VELOCITY:
+                vals[idx] = 0
         with lock:
             control_thread.motor0.velocity_goal = throttle_right * -1
             control_thread.motor1.velocity_goal = throttle_left * -1
@@ -155,7 +163,7 @@ class ControlThread(threading.Thread):
         start_time = time()
 
         _TIMESTEP = 0.001
-        _RENDERESTEP = .05
+        _RENDERESTEP = .1
 
         tick = time()
         rendertick = tick
@@ -179,9 +187,16 @@ class ControlThread(threading.Thread):
                     #print("Tick motors")
                     motor.tick_velocity(_TIMESTEP + clock-tick)
                     motor.update_values(_TIMESTEP, clock-tick)
-                print(clock-tick)
+                    if math.fabs(motor.velocity_feedback) > MAX_VELOCITY:
+                        self.event.set()
+                        print("ERROR EXCEEDED MAX VELOCITY - ABORT!")
+                        print("Motor0 actuat Velocity: %r Command: %r Motor1 actual Velocity: %r Command: %r." % (int(self.motor0.velocity_feedback), int(self.motor0.velocity_command), int(self.motor1.velocity_feedback), int(self.motor1.velocity_command)))
+
+                        break
+                #print(clock-tick)
                 tick = _TIMESTEP + time()
             if clock > rendertick:
+                print("Motor0 actual Velocity: %r Command: %r Motor1 actual Velocity: %r Command: %r." % (int(self.motor0.velocity_feedback), int(self.motor0.velocity_command), int(self.motor1.velocity_feedback), int(self.motor1.velocity_command)))
                 #print("Motor0 Velocity: %r, Motor1 Velocity %r" % (int(self.motor0.velocity_feedback), int(self.motor1.velocity_feedback)))
                 rendertick += _RENDERESTEP
             self.lock.release()
@@ -202,6 +217,8 @@ class Motor:
         self.last_error = 0
 
     def update_values(self, interval, overrun):
+        if math.fabs(self.velocity_command) > MAX_VELOCITY:
+            self.velocity_command = 0
         error =  self.velocity_command - self.velocity_feedback
 
 
